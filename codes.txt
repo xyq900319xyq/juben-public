@@ -1,0 +1,2 @@
+# activation whitelist
+JB-8189-BB41-5169-99BD
