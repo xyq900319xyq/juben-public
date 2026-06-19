@@ -2991,12 +2991,12 @@ def shutdown():
     return jsonify({"ok": True})
 
 def _heartbeat_watcher():
-    """后台线程：超过 15 秒无心跳则退出"""
+    """后台线程：超过 60 秒无心跳则退出"""
     while True:
-        time.sleep(5)
+        time.sleep(10)
         with _heartbeat_lock:
             gap = time.time() - _last_heartbeat
-        if gap > 15:
+        if gap > 60:
             print(f"心跳超时 ({gap:.0f}s)，自动退出")
             save_all_to_disk()
             os._exit(0)
@@ -3085,7 +3085,7 @@ def save_hermes_config():
             "messages": [{"role": "user", "content": "hi"}],
             "max_tokens": 5,
         }).encode("utf-8")
-        resp = _ur.urlopen(req, data=body, timeout=8)
+        resp = _ur.urlopen(req, data=body, timeout=15)
         resp.read()  # consume response
     except _ur.HTTPError as e:
         if e.code == 401:
