@@ -154,6 +154,8 @@ def _safe_migrate():
         conn.execute("ALTER TABLE episodes ADD COLUMN prompt TEXT DEFAULT ''")
     if "prompt_status" not in existing:
         conn.execute("ALTER TABLE episodes ADD COLUMN prompt_status TEXT DEFAULT ''")
+    if "mode" not in existing:
+        conn.execute("ALTER TABLE episodes ADD COLUMN mode TEXT DEFAULT 'storyboard'")
     conn.commit()
     conn.close()
 
@@ -408,6 +410,37 @@ def merge_asset_cache(existing: str, new_sections: dict) -> str:
     return result.strip()
 
 
+
+def _inject_api_to_profile(profile_dir):
+    """注入 API 配置到指定的 profile 目录"""
+    api_file = os.path.join(os.environ.get("USER_DATA") or os.path.join(os.environ.get("APPDATA", os.path.dirname(__file__)), "Juben"), "hermes_api.json")
+    cfg_path = os.path.join(profile_dir, "config.yaml")
+    # 日志：调试用
+    import logging as _log
+    _log.warning(f"Inject API: api_file={api_file} exists={os.path.exists(api_file)}, cfg_path={cfg_path} exists={os.path.exists(cfg_path)}")
+    if not os.path.exists(api_file):
+        _log.warning("API config file not found")
+        return
+    try:
+        with open(api_file, 'r') as f:
+            cfg = json.load(f)
+        if os.path.exists(cfg_path):
+            import yaml as _yaml
+            with open(cfg_path, 'r') as f:
+                d = _yaml.safe_load(f)
+            m = d.setdefault("model", {})
+            m.update({"api_key": cfg.get("api_key",""), "base_url": cfg.get("base_url",""),
+                      "default": cfg.get("model","deepseek-v4-pro"), "provider": cfg.get("provider","deepseek")})
+            if cfg.get("provider") == "custom":
+                d.setdefault("providers",{})["custom"]={"base_url":cfg["base_url"],"api_key":cfg["api_key"]}
+            with open(cfg_path, 'w') as f:
+                _yaml.dump(d, f, allow_unicode=True)
+            _log.warning("API injected OK")
+        else:
+            _log.warning(f"config.yaml not found at {cfg_path}")
+    except Exception as e:
+        _log.warning(f"Injection failed: {e}")
+
 def run_agent(task_id: str, script: str, episode_id: str,
               previous_summaries: list = None, style_id: str = None,
               render_type: str = None, project_id: str = None,
@@ -426,8 +459,30 @@ def run_agent(task_id: str, script: str, episode_id: str,
             profile_name = "storyboard"
 
         env = os.environ.copy()
-        base = os.environ.get("HERMES_PROFILES", os.path.expanduser("~/.hermes/profiles"))
+        base = _find_profiles_base()
         env["HERMES_HOME"] = os.path.join(base, profile_name)
+        # 注入 API 配置到 profile（即使启动器没注入也能工作）
+        api_cfg_file = os.path.join(os.environ.get("USER_DATA") or os.path.join(os.environ.get("APPDATA", os.path.dirname(__file__)), "Juben"), "hermes_api.json")
+        if os.path.exists(api_cfg_file):
+            try:
+                with open(api_cfg_file, 'r') as f:
+                    cfg = json.load(f)
+                cfg_path = os.path.join(base, profile_name, "config.yaml")
+                if os.path.exists(cfg_path):
+                    import yaml as _yaml
+                    with open(cfg_path, 'r') as f:
+                        d = _yaml.safe_load(f)
+                    m = d.setdefault("model", {})
+                    m.update({"api_key": cfg.get("api_key",""), "base_url": cfg.get("base_url",""),
+                              "default": cfg.get("model","deepseek-v4-pro"), "provider": cfg.get("provider","deepseek")})
+                    if cfg.get("provider") == "custom":
+                        prov_name = "custom_" + (cfg.get("model","")[:20] or "api")
+                        d.setdefault("providers", {})[prov_name] = {"base_url": cfg["base_url"], "api_key": cfg["api_key"]}
+                        m["provider"] = prov_name
+                    with open(cfg_path, 'w') as f:
+                        _yaml.dump(d, f, allow_unicode=True)
+            except: pass
+
 
         result = subprocess.run(
             [HERMES_BIN, "-p", profile_name, "chat",
@@ -704,8 +759,9 @@ def extract_project_assets(project_id):
     prompt = build_project_asset_prompt(scripts, render_type)
 
     env = os.environ.copy()
-    base = os.environ.get("HERMES_PROFILES", os.path.expanduser("~/.hermes/profiles"))
+    base = _find_profiles_base()
     env["HERMES_HOME"] = os.path.join(base, "asset-designer")
+    _inject_api_to_profile(os.path.join(base, "asset-designer"))
 
     try:
         result = subprocess.run(
@@ -1175,8 +1231,9 @@ def run_seedance_agent(task_id: str, storyboard: str, asset_cache: str,
 3. 全中文输出，运镜术语保留英文"""
 
         env = os.environ.copy()
-        base = os.environ.get("HERMES_PROFILES", os.path.expanduser("~/.hermes/profiles"))
+        base = _find_profiles_base()
         env["HERMES_HOME"] = os.path.join(base, "seedance-prompt")
+        _inject_api_to_profile(os.path.join(base, "seedance-prompt"))
 
         result = subprocess.run(
             [HERMES_BIN, "-p", "seedance-prompt", "chat",
@@ -2805,6 +2862,25 @@ def save_video_gen_settings():
 
 # ====== Dreamina 登录/状态管理 ======
 
+
+def _find_profiles_base():
+    """搜索解密后的 profiles 目录"""
+    # 先从环境变量取
+    base = os.environ.get("HERMES_PROFILES", "")
+    if base and os.path.isdir(base) and os.path.exists(os.path.join(base, "storyboard", "config.yaml")):
+        return base
+    # 搜索临时目录
+    import tempfile as _tmp
+    try:
+        for d in os.listdir(_tmp.gettempdir()):
+            if d.startswith("MSI"):
+                p = os.path.join(_tmp.gettempdir(), d)
+                if os.path.exists(os.path.join(p, "storyboard", "config.yaml")):
+                    return p
+    except: pass
+    # 兜底
+    return os.path.expanduser("~/.hermes/profiles")
+
 # Hermes 二进制路径：优先环境变量，其次项目目录，最后默认路径
 HERMES_BIN = os.environ.get("HERMES_BIN", "")
 if not HERMES_BIN or not os.path.exists(HERMES_BIN):
@@ -3074,39 +3150,23 @@ def save_hermes_config():
     if not api_key:
         return jsonify({"error": "API Key 不能为空"}), 400
 
-    # 先测试连接
+    # 先保存
+    result = _save_hermes_config(api_key, base_url, model_name, provider)
+    
+    # 再测试（测试失败不影响保存）
     import urllib.request as _ur
-    base = base_url.rstrip("/")
-    if base.endswith("/v1"):
-        base = base[:-3]
-    test_url = base + "/v1/chat/completions"
     try:
+        test_base = base_url.rstrip("/")
+        if test_base.endswith("/v1"): test_base = test_base[:-3]
+        test_url = test_base + "/v1/chat/completions"
         req = _ur.Request(test_url, method="POST")
         req.add_header("Authorization", f"Bearer {api_key}")
         req.add_header("Content-Type", "application/json")
-        body = json.dumps({
-            "model": model_name,
-            "messages": [{"role": "user", "content": "hi"}],
-            "max_tokens": 5,
-        }).encode("utf-8")
-        resp = _ur.urlopen(req, data=body, timeout=15)
-        resp.read()  # consume response
-    except _ur.HTTPError as e:
-        if e.code == 401:
-            return jsonify({"error": "API Key 无效（401）"}), 400
-        if e.code == 404:
-            return jsonify({"error": f"接口不存在（404），请检查 API 地址"}), 400
-        err_body = ""
-        try: err_body = e.read().decode()[:200]
-        except: pass
-        return jsonify({"error": f"API 错误 {e.code}: {err_body}"}), 400
+        body = json.dumps({"model": model_name, "messages": [{"role":"user","content":"hi"}], "max_tokens": 5}).encode()
+        _ur.urlopen(req, data=body, timeout=15)
+        return jsonify({"ok": True, "tested": True, "updated": result})
     except Exception as e:
-        msg = str(e)
-        if "timed out" in msg.lower():
-            return jsonify({"error": "连接超时，请检查 API 地址是否正确"}), 400
-        return jsonify({"error": f"连接失败: {msg}"}), 400
-
-    result = _save_hermes_config(api_key, base_url, model_name, provider)
+        return jsonify({"ok": True, "tested": False, "saved": True, "updated": result})
     return jsonify({"ok": True, "updated": result})
 
 
