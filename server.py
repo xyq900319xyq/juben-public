@@ -3087,7 +3087,7 @@ def save_hermes_config():
             "messages": [{"role": "user", "content": "hi"}],
             "max_tokens": 5,
         }).encode("utf-8")
-        resp = _ur.urlopen(req, timeout=8)
+        resp = _ur.urlopen(req, data=body, timeout=8)
         resp.read()  # consume response
     except _ur.HTTPError as e:
         if e.code == 401:
