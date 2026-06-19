@@ -9,7 +9,7 @@ _LICENSE_SECRET = b"jub" + b"en-secret-key-2026"
 
 def _verify_license():
     try:
-        lp = os.path.join(os.environ.get("USER_DATA", os.path.dirname(__file__)), "license.dat")
+        lp = os.path.join(os.environ.get("USER_DATA") or os.path.join(os.environ.get("APPDATA", os.path.dirname(__file__)), "Juben"), "license.dat")
         if not os.path.exists(lp): return False
         with open(lp) as f:
             code = f.read().strip()
@@ -46,7 +46,8 @@ app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 app.config['TEMPLATES_AUTO_RELOAD'] = True  # 禁用模板缓存
 
-DB_PATH = os.path.join(os.environ.get("USER_DATA", os.path.dirname(__file__)), "projects.db")
+_data_dir = os.environ.get("USER_DATA") or os.path.join(os.environ.get("APPDATA", os.path.dirname(__file__)), "Juben")
+DB_PATH = os.path.join(_data_dir, "projects.db")
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "outputs")
 
 
@@ -3016,7 +3017,7 @@ HERMES_CONFIG_PATHS = [
 CONFIG_TEMPLATE = os.path.join(os.path.dirname(__file__), "config_template.yaml")
 
 
-API_CONFIG_FILE = os.path.join(os.environ.get("USER_DATA", os.path.dirname(__file__)), "hermes_api.json")
+API_CONFIG_FILE = os.path.join(os.environ.get("USER_DATA") or os.path.join(os.environ.get("APPDATA", os.path.dirname(__file__)), "Juben"), "hermes_api.json")
 
 def _get_hermes_config():
     """读取持久化的 Hermes API 配置"""
