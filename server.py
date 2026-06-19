@@ -817,6 +817,7 @@ def add_episode(project_id):
         "VALUES (?,?,?,?,?,?,?,?)",
         (episode_id, project_id, episode_num, title, script, episode_render_type, "pending", now)
     )
+    conn.commit()
 
     trigger = data.get("generate", True)
     if not isinstance(trigger, bool):
