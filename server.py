@@ -485,7 +485,7 @@ def run_agent(task_id: str, script: str, episode_id: str,
 
 
         result = subprocess.run(
-            [HERMES_BIN, "-p", profile_name, "chat",
+            HERMES_CMD + ["-p", profile_name, "chat",
              "-q", prompt, "--quiet"],
             capture_output=True, text=True, timeout=7200,
             env=env, cwd=os.path.expanduser("~"),
@@ -765,7 +765,7 @@ def extract_project_assets(project_id):
 
     try:
         result = subprocess.run(
-            [HERMES_BIN, "-p", "asset-designer", "chat",
+            HERMES_CMD + ["-p", "asset-designer", "chat",
              "-q", prompt, "--quiet"],
             capture_output=True, text=True, timeout=7200,
             env=env, cwd=os.path.expanduser("~"),
@@ -1236,7 +1236,7 @@ def run_seedance_agent(task_id: str, storyboard: str, asset_cache: str,
         _inject_api_to_profile(os.path.join(base, "seedance-prompt"))
 
         result = subprocess.run(
-            [HERMES_BIN, "-p", "seedance-prompt", "chat",
+            HERMES_CMD + ["-p", "seedance-prompt", "chat",
              "-q", prompt, "--quiet", "-Q"],
             capture_output=True, text=True, timeout=7200,
             env=env, cwd=os.path.expanduser("~"),
@@ -2882,13 +2882,8 @@ def _find_profiles_base():
     return os.path.expanduser("~/.hermes/profiles")
 
 # Hermes 二进制路径：优先环境变量，其次项目目录，最后默认路径
-HERMES_BIN = os.environ.get("HERMES_BIN", "")
-if not HERMES_BIN or not os.path.exists(HERMES_BIN):
-    local_hermes = os.path.join(os.path.dirname(__file__), "..", "hermes", "hermes.exe")
-    if os.path.exists(local_hermes):
-        HERMES_BIN = os.path.abspath(local_hermes)
-if not HERMES_BIN or not os.path.exists(HERMES_BIN):
-    HERMES_BIN = r"D:\hermes\hermes-agent\venv\Scripts\hermes.exe"  # 开发者本机兜底
+# Hermes 调用方式：用 sys.executable -m hermes_cli，避免 uv trampoline 问题
+HERMES_CMD = [sys.executable, "-m", "hermes_cli"]
 
 def _dreamina_run_to_file(args: str) -> str:
     """运行 dreamina 命令，输出重定向到临时文件（避免 Windows PIPE 缓冲问题）。
