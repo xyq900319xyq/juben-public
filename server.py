@@ -9,7 +9,7 @@ _LICENSE_SECRET = b"jub" + b"en-secret-key-2026"
 
 def _verify_license():
     try:
-        lp = os.path.join(os.path.dirname(__file__), "license.dat")
+        lp = os.path.join(os.environ.get("USER_DATA", os.path.dirname(__file__)), "license.dat")
         if not os.path.exists(lp): return False
         with open(lp) as f:
             code = f.read().strip()
@@ -46,7 +46,7 @@ app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 app.config['TEMPLATES_AUTO_RELOAD'] = True  # 禁用模板缓存
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "projects.db")
+DB_PATH = os.path.join(os.environ.get("USER_DATA", os.path.dirname(__file__)), "projects.db")
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "outputs")
 
 
@@ -425,8 +425,8 @@ def run_agent(task_id: str, script: str, episode_id: str,
             profile_name = "storyboard"
 
         env = os.environ.copy()
-        env["HERMES_HOME"] = os.environ.get("HERMES_PROFILES",
-            os.path.expanduser(f"~/.hermes/profiles/{profile_name}"))
+        base = os.environ.get("HERMES_PROFILES", os.path.expanduser("~/.hermes/profiles"))
+        env["HERMES_HOME"] = os.path.join(base, profile_name)
 
         result = subprocess.run(
             [HERMES_BIN, "-p", profile_name, "chat",
@@ -703,7 +703,8 @@ def extract_project_assets(project_id):
     prompt = build_project_asset_prompt(scripts, render_type)
 
     env = os.environ.copy()
-    env["HERMES_HOME"] = os.path.expanduser("~/.hermes/profiles/asset-designer")
+    base = os.environ.get("HERMES_PROFILES", os.path.expanduser("~/.hermes/profiles"))
+    env["HERMES_HOME"] = os.path.join(base, "asset-designer")
 
     try:
         result = subprocess.run(
@@ -856,7 +857,7 @@ def add_episode(project_id):
             target=run_agent,
             args=(task_id, script, episode_id,
                   previous_summaries if previous_summaries else None,
-                  style_id, episode_render_type, project_id, mode)
+                  style_id, episode_render_type, project_id, "storyboard")
         )
         thread.daemon = True
         thread.start()
@@ -1172,7 +1173,8 @@ def run_seedance_agent(task_id: str, storyboard: str, asset_cache: str,
 3. 全中文输出，运镜术语保留英文"""
 
         env = os.environ.copy()
-        env["HERMES_HOME"] = os.path.expanduser("~/.hermes/profiles/seedance-prompt")
+        base = os.environ.get("HERMES_PROFILES", os.path.expanduser("~/.hermes/profiles"))
+        env["HERMES_HOME"] = os.path.join(base, "seedance-prompt")
 
         result = subprocess.run(
             [HERMES_BIN, "-p", "seedance-prompt", "chat",
@@ -3013,7 +3015,7 @@ HERMES_CONFIG_PATHS = [
 CONFIG_TEMPLATE = os.path.join(os.path.dirname(__file__), "config_template.yaml")
 
 
-API_CONFIG_FILE = os.path.join(os.path.dirname(__file__), "hermes_api.json")
+API_CONFIG_FILE = os.path.join(os.environ.get("USER_DATA", os.path.dirname(__file__)), "hermes_api.json")
 
 def _get_hermes_config():
     """读取持久化的 Hermes API 配置"""
