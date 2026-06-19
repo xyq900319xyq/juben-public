@@ -3013,47 +3013,45 @@ HERMES_CONFIG_PATHS = [
 CONFIG_TEMPLATE = os.path.join(os.path.dirname(__file__), "config_template.yaml")
 
 
+API_CONFIG_FILE = os.path.join(os.path.dirname(__file__), "hermes_api.json")
+
 def _get_hermes_config():
-    """读取 Hermes API 配置（从 storyboard 的 config.yaml）"""
-    cfg_path = HERMES_CONFIG_PATHS[0]
-    if not os.path.exists(cfg_path):
-        return {"api_key": "", "base_url": "", "model": "", "provider": ""}
-    try:
-        import yaml
-        with open(cfg_path, 'r', encoding='utf-8') as f:
-            data = yaml.safe_load(f)
-        model = data.get("model", {})
-        return {
-            "api_key": model.get("api_key", ""),
-            "base_url": model.get("base_url", ""),
-            "model": model.get("default", ""),
-            "provider": model.get("provider", ""),
-            "configured": model.get("api_key", "") not in ("", "YOUR_API_KEY_HERE"),
-        }
-    except Exception:
-        return {"api_key": "", "base_url": "", "model": "", "provider": "", "configured": False}
+    """读取持久化的 Hermes API 配置"""
+    if os.path.exists(API_CONFIG_FILE):
+        try:
+            with open(API_CONFIG_FILE, 'r', encoding='utf-8') as f:
+                cfg = json.load(f)
+            cfg["configured"] = bool(cfg.get("api_key") and cfg["api_key"] != "YOUR_API_KEY_HERE")
+            return cfg
+        except: pass
+    return {"api_key": "", "base_url": "https://api.deepseek.com/v1", "model": "deepseek-v4-pro", "provider": "deepseek", "configured": False}
 
 
 def _save_hermes_config(api_key, base_url, model_name, provider):
-    """写入 Hermes API 配置到所有三个 profile 的 config.yaml"""
-    result = []
-    for cfg_path in HERMES_CONFIG_PATHS:
-        try:
-            import yaml
-            with open(cfg_path, 'r', encoding='utf-8') as f:
-                data = yaml.safe_load(f)
-            if "model" not in data:
-                data["model"] = {}
-            data["model"]["api_key"] = api_key
-            data["model"]["base_url"] = base_url
-            data["model"]["default"] = model_name
-            data["model"]["provider"] = provider
-            with open(cfg_path, 'w', encoding='utf-8') as f:
-                yaml.dump(data, f, allow_unicode=True, default_flow_style=False)
-            result.append(cfg_path)
-        except Exception as e:
-            result.append(f"FAIL:{cfg_path}:{e}")
-    return result
+    """保存到持久化文件 + 同步到所有已解密 profile"""
+    cfg = {"api_key": api_key, "base_url": base_url, "model": model_name, "provider": provider}
+    # 保存到持久文件
+    with open(API_CONFIG_FILE, 'w', encoding='utf-8') as f:
+        json.dump(cfg, f, ensure_ascii=False)
+    # 同步到 profile config
+    for prof in ["storyboard", "asset-designer", "seedance-prompt"]:
+        home = os.environ.get("HERMES_HOME", "")
+        if home and os.path.isdir(home):
+            prof_path = os.path.join(home, prof)
+        else:
+            prof_path = os.path.expanduser(f"~/.hermes/profiles/{prof}")
+        cfg_path = os.path.join(prof_path, "config.yaml")
+        if os.path.exists(cfg_path):
+            try:
+                import yaml
+                with open(cfg_path, 'r', encoding='utf-8') as f:
+                    data = yaml.safe_load(f)
+                if "model" not in data: data["model"] = {}
+                data["model"].update(cfg)
+                with open(cfg_path, 'w', encoding='utf-8') as f:
+                    yaml.dump(data, f, allow_unicode=True, default_flow_style=False)
+            except: pass
+    return ["saved"]
 
 
 @app.route("/api/settings/hermes-config", methods=["GET"])
