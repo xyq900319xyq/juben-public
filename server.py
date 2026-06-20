@@ -2882,7 +2882,8 @@ def _find_profiles_base():
     return os.path.expanduser("~/.hermes/profiles")
 
 # Hermes 二进制路径：优先环境变量，其次项目目录，最后默认路径
-HERMES_CMD = [sys.executable, "-c", "from hermes_cli.main import main;main()"]
+_hermes_dir = os.path.join(os.path.dirname(__file__), "..", "hermes")
+HERMES_CMD = [sys.executable, "-c", "import sys;sys.path.insert(0,r'"+os.path.abspath(_hermes_dir)+"');from hermes_cli.main import main;main()"]
 
 def _dreamina_run_to_file(args: str) -> str:
     """运行 dreamina 命令，输出重定向到临时文件（避免 Windows PIPE 缓冲问题）。
