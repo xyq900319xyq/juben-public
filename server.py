@@ -459,15 +459,21 @@ def run_agent(task_id: str, script: str, episode_id: str,
             profile_name = "storyboard"
 
         env = os.environ.copy()
+        env["PYTHONUTF8"] = "1"
+        env["PYTHONIOENCODING"] = "utf-8"
         base = _find_profiles_base()
-        env["HERMES_HOME"] = os.path.join(base, profile_name)
+        env["HERMES_HOME"] = base  # Hermes 从根目录找 profiles/<name>/
         # 注入 API 配置到 profile（即使启动器没注入也能工作）
         api_cfg_file = os.path.join(os.environ.get("USER_DATA") or os.path.join(os.environ.get("APPDATA", os.path.dirname(__file__)), "Juben"), "hermes_api.json")
         if os.path.exists(api_cfg_file):
             try:
                 with open(api_cfg_file, 'r') as f:
                     cfg = json.load(f)
-                cfg_path = os.path.join(base, profile_name, "config.yaml")
+                cfg_path = os.path.join(base, "profiles", profile_name, "config.yaml")
+                if not os.path.exists(cfg_path):
+                    cfg_path = os.path.join(base, profile_name, "config.yaml")
+                if not os.path.exists(cfg_path):
+                    cfg_path = os.path.join(base, profile_name, "config.yaml")
                 if os.path.exists(cfg_path):
                     import yaml as _yaml
                     with open(cfg_path, 'r') as f:
@@ -760,29 +766,23 @@ def extract_project_assets(project_id):
 
     env = os.environ.copy()
     base = _find_profiles_base()
-    env["HERMES_HOME"] = os.path.join(base, "asset-designer")
+    env["HERMES_HOME"] = base  # Hermes 从根目录找 profiles/asset-designer/
     _inject_api_to_profile(os.path.join(base, "asset-designer"))
 
     try:
-        result = subprocess.run(
-            HERMES_CMD + [ "-p", "asset-designer", "chat",
-             "-q", prompt, "--quiet"],
-            capture_output=True, text=True, timeout=7200,
-            env=env, cwd=os.path.expanduser("~"),
-        )
-        combined = result.stdout + "\n" + (result.stderr or "")
-        output = combined.strip()
-        if result.returncode != 0:
-            output = result.stderr.strip() or output or "Agent 执行出错"
-        else:
-            output = _filter_asset_output(output)
+        output = _run_hermes(["-p", "asset-designer", "chat", "-q", prompt, "--quiet"], env, timeout=7200)
+        output = _filter_asset_output(output)
 
         conn2 = get_db()
         conn2.execute("UPDATE projects SET asset_cache = ? WHERE id = ?",
                       (output, project_id))
         conn2.commit()
-        conn2.close()
 
+        # Update episode status too (frontend polls episode.asset_status)
+        conn2.execute("UPDATE episodes SET asset_status = ?, asset_status_updated = CURRENT_TIMESTAMP WHERE project_id = ?",
+                      ("completed", project_id))
+        conn2.commit()
+        conn2.close()
         return jsonify({"ok": True, "asset_cache": output})
     except subprocess.TimeoutExpired:
         return jsonify({"error": "资产提取超时（超过120分钟）"}), 500
@@ -1232,7 +1232,7 @@ def run_seedance_agent(task_id: str, storyboard: str, asset_cache: str,
 
         env = os.environ.copy()
         base = _find_profiles_base()
-        env["HERMES_HOME"] = os.path.join(base, "seedance-prompt")
+        env["HERMES_HOME"] = base  # Hermes 从根目录找 profiles/seedance-prompt/
         _inject_api_to_profile(os.path.join(base, "seedance-prompt"))
 
         result = subprocess.run(
@@ -2869,13 +2869,22 @@ def _find_profiles_base():
     base = os.environ.get("HERMES_PROFILES", "")
     if base and os.path.isdir(base) and os.path.exists(os.path.join(base, "storyboard", "config.yaml")):
         return base
-    # 搜索临时目录
+    # 搜索临时目录（Hermes 需要 profiles/ 子目录）
     import tempfile as _tmp
     try:
         for d in os.listdir(_tmp.gettempdir()):
             if d.startswith("MSI"):
                 p = os.path.join(_tmp.gettempdir(), d)
-                if os.path.exists(os.path.join(p, "storyboard", "config.yaml")):
+                # Check for profiles/storyboard or just storyboard
+                if os.path.exists(os.path.join(p, "profiles", "storyboard", "config.yaml")):
+                    return p
+                elif os.path.exists(os.path.join(p, "storyboard", "config.yaml")):
+                    # Wrap it on the fly
+                    profiles_dir = os.path.join(p, "profiles")
+                    os.makedirs(profiles_dir, exist_ok=True)
+                    for item in os.listdir(p):
+                        if item != "profiles":
+                            shutil.move(os.path.join(p, item), os.path.join(profiles_dir, item))
                     return p
     except: pass
     # 兜底
@@ -2884,6 +2893,30 @@ def _find_profiles_base():
 # Hermes 二进制路径：优先环境变量，其次项目目录，最后默认路径
 _hermes_dir = os.path.join(os.path.dirname(__file__), "..", "hermes")
 HERMES_CMD = [sys.executable, "-c", "import sys;sys.path.insert(0,r'"+os.path.abspath(_hermes_dir)+"');from hermes_cli.main import main;main()"]
+
+def _run_hermes(args, env, timeout=7200):
+    """运行 Hermes CLI，统一处理编码"""
+    try:
+        # Append args to HERMES_CMD (Hermes reads from sys.argv)
+        cmd = HERMES_CMD + list(args)
+        result = subprocess.run(
+            cmd,
+            capture_output=True, text=True,
+            encoding='utf-8', errors='replace',
+            timeout=timeout, env=env,
+            cwd=os.path.expanduser("~"),
+        )
+        combined = result.stdout + "\n" + (result.stderr or "")
+        if not combined.strip() and result.returncode == 0:
+            import logging as _log
+            _log.warning("hermes stdout 为空，可能编码异常")
+        return combined.strip()
+    except subprocess.TimeoutExpired:
+        return "Agent 执行超时（超过 %d 分钟）" % (timeout // 60)
+    except Exception as e:
+        import logging as _log
+        _log.exception("hermes 执行出错")
+        return "Agent 执行出错: %s" % str(e)
 
 def _dreamina_run_to_file(args: str) -> str:
     """运行 dreamina 命令，输出重定向到临时文件（避免 Windows PIPE 缓冲问题）。
@@ -3071,7 +3104,7 @@ def _heartbeat_watcher():
         time.sleep(10)
         with _heartbeat_lock:
             gap = time.time() - _last_heartbeat
-        if gap > 60:
+        if gap > 600:
             print(f"心跳超时 ({gap:.0f}s)，自动退出")
             save_all_to_disk()
             os._exit(0)
